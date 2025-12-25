@@ -54,10 +54,21 @@ st.markdown("""
         background-color: #fff3cd; border: 2px solid #ffc107; padding: 20px; border-radius: 10px; text-align: center;
         margin: 20px 0;
     }
-    /* 推荐行动样式 */
-    .guide-box {
-        margin-top: 15px; padding: 10px; background-color: #e3f2fd; border-radius: 5px; border-left: 4px solid #2196f3;
+    /* 助手建议样式 */
+    .helper-box {
+        background-color: #e3f2fd; border: 1px solid #90caf9; padding: 10px; border-radius: 8px; margin-top: 10px; color: #0d47a1; font-size: 0.9em;
     }
+    /* 规则书样式 */
+    .coc-rules-intro {
+        font-size: 0.95em; color: #333; background-color: #fff; padding: 20px; border-radius: 5px; 
+        border: 1px solid #ddd; line-height: 1.6;
+    }
+    .coc-rules-intro h4 { color: #8b0000; border-bottom: 3px solid #8b0000; padding-bottom: 10px; margin-top: 0; font-size: 1.5em; text-align: center;}
+    .coc-rules-intro h5 { color: #2b2b2b; background-color: #e9ecef; padding: 8px; margin-top: 20px; font-weight: bold; border-left: 5px solid #8b0000;}
+    .coc-rules-intro ul { padding-left: 20px; }
+    .coc-rules-intro table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+    .coc-rules-intro th, .coc-rules-intro td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    .coc-rules-intro th { background-color: #f2f2f2; font-weight: bold; color: #8b0000; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -287,7 +298,7 @@ def ai_narrate_outcome(action_context, check_info=None):
     if check_info:
         outcome_str = f"技能【{check_info['skill']}】检定结果：{check_info['result_level']} (掷骰 {check_info['roll']}/目标 {check_info['target']})"
 
-    # 获取角色特性，如果存在
+    # 获取角色特性
     traits = st.session_state.investigator.get('traits', '无') if st.session_state.investigator else '无'
 
     prompt = f"""
@@ -295,7 +306,7 @@ def ai_narrate_outcome(action_context, check_info=None):
 
     【玩家信息】
     玩家角色特性：{traits}
-    (请在生成剧情时，根据该特性调整角色的行为描述、对话风格或心理活动。例如：如果玩家有幽闭恐惧症，在狭窄空间应表现出不适。)
+    (请在生成剧情时，根据该特性调整角色的行为描述、对话风格或心理活动。)
 
     【剧本背景】
     1921年12月，罗德岛。10年前“前进号”捕鲸船带回了被诅咒的金币（偷自克苏鲁祭坛）。
@@ -320,10 +331,7 @@ def ai_narrate_outcome(action_context, check_info=None):
     3. 风格：冷峻、客观、充满悬疑感，但绝不拖沓。
 
     - 如果有重要线索（如：航海日志内容、金币、NPC证词），请在段落末尾以【线索：...】格式明确标注。
-
-    【新增要求】
-    在剧情描述结束后，请另起一段（使用 Markdown 格式），列出【推荐行动指南】。
-    请基于当前情境，给出 2-3 个合理的后续行动建议，帮助玩家决策（例如：“你可以尝试...”）。
+    - **严禁**在剧情末尾提供“推荐行动指南”或类似的下一步建议。只描述当前发生的事情和结果。
     """
     try:
         response = client.chat.completions.create(
@@ -336,6 +344,43 @@ def ai_narrate_outcome(action_context, check_info=None):
         return f"AI 错误: {e}"
 
 
+# --- 跑团助手 ---
+def ai_get_help(current_context, investigator):
+    """跑团助手：分析当前局势，给出建议"""
+    client = get_ai_client()
+    if not client: return "助手提示：请先配置API Key。"
+
+    prompt = f"""
+    【角色】你是一位经验丰富的《克苏鲁的呼唤》(CoC 7e) 跑团老手，正在指导一位新手玩家。
+    【当前模组】《罗德岛的黄金梦魇》
+    【当前剧情】{current_context[-1000:]}
+    【玩家职业】{investigator['job']}
+    【玩家技能】{list(investigator['skills'].keys())}
+
+    【任务】
+    玩家现在有点迷茫，不知道该做什么。请根据当前剧情，给出 3 条具体的行动建议。
+    建议方向：
+    1. 可以调查的地点或物品。
+    2. 可以询问NPC的问题。
+    3. 可以使用的技能（如侦查、聆听、心理学等）。
+
+    【限制】
+    - 不要剧透后续剧情！
+    - 只提供思路，让玩家自己去执行。
+    - 语气亲切、鼓励。
+    - 使用 Markdown 列表格式输出。
+    """
+    try:
+        response = client.chat.completions.create(
+            model=st.session_state.model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"助手掉线了: {e}"
+
+
 # ================= 4. 初始化状态 =================
 if "investigator" not in st.session_state: st.session_state.investigator = None
 if "char_create_step" not in st.session_state: st.session_state.char_create_step = 1
@@ -346,6 +391,7 @@ if "api_key" not in st.session_state: st.session_state.api_key = ""
 if "base_url" not in st.session_state: st.session_state.base_url = "https://api.deepseek.com"
 if "model_name" not in st.session_state: st.session_state.model_name = "deepseek-chat"
 if "intro_acknowledged" not in st.session_state: st.session_state.intro_acknowledged = False
+if "rules_read" not in st.session_state: st.session_state.rules_read = False  # 新增：规则阅读状态
 
 if "notebook" not in st.session_state: st.session_state.notebook = []
 if "action_log" not in st.session_state: st.session_state.action_log = []
@@ -354,6 +400,117 @@ if "pending_check" not in st.session_state: st.session_state.pending_check = Non
 
 
 # ================= 5. 界面渲染 =================
+
+# --- 新增功能：规则导读页 ---
+def render_rules_guide():
+    st.markdown("## 📜 CoC 7e 规则速览")
+    st.markdown("在开始创建角色之前，请先了解一下《克苏鲁的呼唤》的核心规则。")
+
+    st.markdown("""
+    <div class='coc-rules-intro'>
+    <h4>📖 CoC 7e 核心规则速查</h4>
+
+    <h5>一、技能检定（Skill Check）</h5>
+    <p>1️⃣ <b>基本流程</b><br>
+    先确定目标（想干嘛）→ 确定难度等级 → 是否允许推骰（能否合理解释？先预告失败后果）→ 掷 D100 → 成功则可能勾技能</p>
+
+    <p>2️⃣ <b>成功等级</b><br>
+    <table>
+    <tr><th>等级</th><th>判定标准</th></tr>
+    <tr><td>大成功</td><td>01</td></tr>
+    <tr><td>极限成功</td><td>≤ 技能/属性 × 1/5</td></tr>
+    <tr><td>困难成功</td><td>≤ 技能/属性 × 1/2</td></tr>
+    <tr><td>普通成功</td><td>≤ 技能/属性</td></tr>
+    <tr><td>失败</td><td>> 技能</td></tr>
+    <tr><td>大失败</td><td>100；或技能<50且掷96–100</td></tr>
+    </table>
+    ⚠️ 推骰失败 = 必须承受严重后果</p>
+
+    <h5>二、对抗检定（Opposed Roll）</h5>
+    <p>双方各自掷同意的技能/属性，比较成功等级高低。<br>
+    <b>成功等级排序</b>：大成功 > 极限 > 困难 > 普通 > 失败<br>
+    平手 → 技能/属性高者胜；仍平手 → 僵局或重骰<br>
+    ❌ 不能推骰</p>
+
+    <h5>三、奖励骰 / 惩罚骰（Bonus / Penalty Dice）</h5>
+    <p>奖励骰：多掷一个十位骰，取<b>更低</b><br>
+    惩罚骰：多掷一个十位骰，取<b>更高</b><br>
+    多个可叠加（一般不超过 2）。本质：概率修正，而非直接加减数值。</p>
+
+    <h5>四、联合技能检定</h5>
+    <p>只掷一次骰，同时与多个技能对照。<br>
+    Keeper 决定：是否需要<b>全部成功</b> 或 <b>任一成功即可</b></p>
+
+    <h5>五、近身战斗（Melee）</h5>
+    <p>1️⃣ <b>行动顺序</b>：按 DEX 高到低<br>
+    2️⃣ <b>行动选择</b>：攻击 / 闪避 / 反击 / 战术动作 / 逃跑 / 施法<br>
+    3️⃣ <b>对抗逻辑</b><br>
+    - 反击：战斗技能 vs 战斗技能 → 成功等级高者造成伤害<br>
+    - 闪避：战斗技能 vs 闪避 → 攻击方等级更高才命中<br>
+    - 平手规则明确偏向防守方（除反击平手）<br>
+    4️⃣ <b>极限成功伤害</b><br>
+    - 穿刺武器：最大伤害 + 再掷伤害<br>
+    - 非穿刺武器：最大伤害</p>
+
+    <h5>六、战术动作（缴械 / 压制 / 推倒等）</h5>
+    <p>比较 <b>体格（Build）</b><br>
+    每差 1 点 → 攻击者 1 个惩罚骰<br>
+    差 ≥3 → 战术不可行<br>
+    成功 ≠ 伤害，而是 <b>实现战术目标</b></p>
+
+    <h5>七、火器战斗（Firearms）</h5>
+    <p>1️⃣ <b>核心原则</b>：不对抗，失败永不造成伤害，困难度由<b>射程决定</b><br>
+    2️⃣ <b>射程 → 困难度</b><br>
+    <table>
+    <tr><th>射程</th><th>难度</th></tr>
+    <tr><td>基本</td><td>普通</td></tr>
+    <tr><td>2×</td><td>困难</td></tr>
+    <tr><td>4×</td><td>极限</td></tr>
+    </table>
+    3️⃣ <b>常见修正</b><br>
+    - 瞄准：奖励骰<br>
+    - 近距离：奖励骰<br>
+    - 目标闪避 / 掩护 / 快速移动：惩罚骰<br>
+    - 近战射击：惩罚骰 + 失误可能误伤友军<br>
+    4️⃣ <b>全自动 / 爆裂</b><br>
+    技能 ÷10 = 每轮子弹数（最少3）。每轮单独掷骰，后续轮次逐渐增加惩罚骰。<br>
+    极限成功 → 全中 + 部分贯穿</p>
+
+    <h5>八、追逐规则（Chase）</h5>
+    <p>1️⃣ <b>初始化</b>：决定追逐分组，进行<b>速度检定（CON 或 驾驶）</b><br>
+    - 成功：MOV 不变<br>
+    - 极限：MOV +1<br>
+    - 失败：MOV -1<br>
+    2️⃣ <b>行动</b>：普通移动 / 冲刺 / 攻击 / 协助。冲刺越猛 → 危害骰惩罚越多<br>
+    3️⃣ <b>特殊情况</b><br>
+    - 射击中：移动会吃惩罚骰<br>
+    - 打轮胎：护甲3，仅穿刺可毁<br>
+    - 司机重伤 → 立即危害检定</p>
+
+    <h5>九、理智（SAN）与疯狂</h5>
+    <p>1️⃣ <b>触发条件</b><br>
+    - 单次失 SAN ≥5 → 临时疯狂<br>
+    - 一天失 ≥1/5 SAN → 不定期疯狂<br>
+    2️⃣ <b>疯狂类型</b><br>
+    - 实时：1D10 回合<br>
+    - 摘要：1D10 小时<br>
+    - 可能获得：恐惧症 / 狂躁症 / 妄想<br>
+    3️⃣ <b>恢复</b><br>
+    - 临时疯狂：休息即可<br>
+    - 不定期疯狂：月度治疗检定<br>
+    - 私人治疗 > 机构治疗 成功率高</p>
+
+    <h5>十、神话书与魔法</h5>
+    <p>1️⃣ <b>阅读神话书</b>：越古老 → 难度越高。初读：SAN 损失 + 神话技能。全书学习：时间长，但收益完整。<br>
+    2️⃣ <b>施法</b>：初次施法：困难 POW。可推骰（失败代价极高）。MP 可透支 HP。<br>
+    3️⃣ <b>POW 成长</b>：赢得 POW 对抗 或 Luck 01。擲 1D100 > 当前 POW → POW +1D10（永久）</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.button("我已了解规则，开始创建角色", type="primary", use_container_width=True):
+        st.session_state.rules_read = True
+        st.rerun()
+
 
 def render_character_creation():
     st.header("📝 调查员建卡")
@@ -368,19 +525,18 @@ def render_character_creation():
         name = col1.text_input("调查员姓名", value=name_val)
         job = col2.selectbox("职业", list(JOBS_DATA.keys()), index=job_idx)
 
-        # --- 新增：角色特性输入框 ---
+        # 角色特性
         traits_val = st.session_state.get("temp_traits", "")
         traits = st.text_area("✨ 角色特性 (性格、外貌、怪癖、背景)", value=traits_val,
                               placeholder="例如：性格急躁，右眼有伤疤，极度害怕老鼠，随身带着去世妻子的照片...",
                               height=100)
-        # ---------------------------
 
         st.info(f"职业特性：{', '.join(JOBS_DATA[job]['skills'])}")
 
         if st.button("下一步：属性投掷"):
             st.session_state.temp_name = name
             st.session_state.temp_job = job
-            st.session_state.temp_traits = traits  # 保存特性
+            st.session_state.temp_traits = traits
             st.session_state.char_create_step = 2
             st.rerun()
     # --- 步骤 2 ---
@@ -405,7 +561,7 @@ def render_character_creation():
                 base_skills = BASE_SKILLS.copy()
                 current_job = st.session_state.temp_job
 
-                # --- 修复：去重职业技能 ---
+                # 去重职业技能
                 raw_job_skills = JOBS_DATA[current_job]["skills"] + ["信用评级"]
                 job_specific_skills = []
                 seen = set()
@@ -433,11 +589,10 @@ def render_character_creation():
                 base_skills["闪避"] = st.session_state.temp_stats["DEX"] // 2
                 base_skills["母语"] = st.session_state.temp_stats["EDU"]
 
-                # --- 新增功能：初始值超过80的强制修正为80 ---
+                # 初始值超过80的强制修正为80
                 for k in base_skills:
                     if base_skills[k] > 80:
                         base_skills[k] = 80
-                # ----------------------------------------
 
                 st.session_state.base_skills_snapshot = base_skills
                 for sk in base_skills.keys(): st.session_state.allocations[sk] = {'osp': 0, 'pip': 0}
@@ -454,7 +609,6 @@ def render_character_creation():
         spent_pip = 0
         all_skills = list(st.session_state.base_skills_snapshot.keys())
 
-        # --- 修复：生成无重复的 job_skills 用于判定 ---
         raw_js = JOBS_DATA[job_key]["skills"] + ["信用评级"]
         job_skills = []
         seen = set()
@@ -516,7 +670,6 @@ def render_character_creation():
         tab_job, tab_other = st.tabs(["💼 职业技能", "🌍 其他技能"])
         with tab_job:
             for sk in job_skills:
-                # 只有当技能在基础表里才渲染（防止数据残留）
                 if sk in st.session_state.base_skills_snapshot:
                     render_skill_input(sk, True)
         with tab_other:
@@ -560,7 +713,7 @@ def finalize_character():
     st.session_state.investigator = {
         "name": st.session_state.temp_name,
         "job": st.session_state.temp_job,
-        "traits": st.session_state.get("temp_traits", "无"),  # 保存特性
+        "traits": st.session_state.get("temp_traits", "无"),
         "stats": st.session_state.temp_stats,
         "derived": {
             "HP": hp, "MAX_HP": hp,
@@ -571,8 +724,6 @@ def finalize_character():
         "inventory": ["调查员手册", "铅笔", "钱包", "打火机"]
     }
 
-    # ------------------ 修改：注入《罗德岛的黄金梦魇》模组特定剧情 ------------------
-    # 同时将角色特性加入到开场 Prompt 中
     intro_prompt = f"""
     【指令】你是《克苏鲁的呼唤》7版模组《罗德岛的黄金梦魇》(The Golden Dream of Rhode Island) 的守密人(KP)。
     【当前场景】
@@ -601,16 +752,13 @@ def finalize_character():
     3. 风格：冷峻、客观、充满悬疑感，但绝不拖沓。
 
     请注意：如果剧情中出现了重要的可调查信息，请在段落末尾添加【线索：...】标记。
-    【新增要求】
-    在剧情描述结束后，请另起一段（使用 Markdown 格式），列出【推荐行动指南】。
-    请基于当前情境，给出 2-3 个合理的后续行动建议。
+    **严禁**在此次回复中生成“推荐行动指南”或类似的建议。只描述当前发生的事情和结果。
     """
 
     with st.spinner("守密人正在翻阅《罗德岛的黄金梦魇》剧本..."):
-        raw_text = ai_narrate_outcome("游戏开始", None)  # 复用通用叙事函数逻辑
+        raw_text = ai_narrate_outcome("游戏开始", None)
         st.session_state.dm_text = process_clues(raw_text)
         add_log("system", "模组开始：罗德岛的黄金梦魇", "导入完成")
-    # --------------------------------------------------------------------
 
 
 def render_intro_page():
@@ -651,10 +799,7 @@ def render_game_interface():
     st.sidebar.markdown("### 🕵️ 角色面板")
     inv = st.session_state.investigator
     st.sidebar.markdown(f"**{inv['name']}** ({inv['job']})")
-
-    # --- 新增：侧边栏显示角色特性 ---
     st.sidebar.caption(f"📝 特性：{inv.get('traits', '无')}")
-    # -----------------------------
 
     c1, c2, c3 = st.sidebar.columns(3)
     c1.metric("HP", f"{inv['derived']['HP']}/{inv['derived']['MAX_HP']}")
@@ -666,12 +811,127 @@ def render_game_interface():
         for k, v in sorted_skills:
             if v > 10: st.markdown(f"{k}: **{v}%**")
 
+    # --- 跑团助手 ---
+    with st.sidebar.expander("🆘 跑团助手", expanded=False):
+        # 1. 规则介绍 (置顶) - 完整版
+        st.markdown("""
+        <div class='coc-rules-intro'>
+        <h4>📜 CoC 7e 核心规则速查 (进阶版)</h4>
+
+        <h5>一、技能检定（Skill Check）</h5>
+        <p>1️⃣ <b>基本流程</b><br>
+        先确定目标（想干嘛）→ 确定难度等级 → 是否允许推骰（能否合理解释？先预告失败后果）→ 掷 D100 → 成功则可能勾技能</p>
+
+        <p>2️⃣ <b>成功等级</b><br>
+        <table>
+        <tr><th>等级</th><th>判定标准</th></tr>
+        <tr><td>大成功</td><td>01</td></tr>
+        <tr><td>极限成功</td><td>≤ 技能/属性 × 1/5</td></tr>
+        <tr><td>困难成功</td><td>≤ 技能/属性 × 1/2</td></tr>
+        <tr><td>普通成功</td><td>≤ 技能/属性</td></tr>
+        <tr><td>失败</td><td>> 技能</td></tr>
+        <tr><td>大失败</td><td>100；或技能<50且掷96–100</td></tr>
+        </table>
+        ⚠️ 推骰失败 = 必须承受严重后果</p>
+
+        <h5>二、对抗检定（Opposed Roll）</h5>
+        <p>双方各自掷同意的技能/属性，比较成功等级高低。<br>
+        <b>成功等级排序</b>：大成功 > 极限 > 困难 > 普通 > 失败<br>
+        平手 → 技能/属性高者胜；仍平手 → 僵局或重骰<br>
+        ❌ 不能推骰</p>
+
+        <h5>三、奖励骰 / 惩罚骰（Bonus / Penalty Dice）</h5>
+        <p>奖励骰：多掷一个十位骰，取<b>更低</b><br>
+        惩罚骰：多掷一个十位骰，取<b>更高</b><br>
+        多个可叠加（一般不超过 2）。本质：概率修正，而非直接加减数值。</p>
+
+        <h5>四、联合技能检定</h5>
+        <p>只掷一次骰，同时与多个技能对照。<br>
+        Keeper 决定：是否需要<b>全部成功</b> 或 <b>任一成功即可</b></p>
+
+        <h5>五、近身战斗（Melee）</h5>
+        <p>1️⃣ <b>行动顺序</b>：按 DEX 高到低<br>
+        2️⃣ <b>行动选择</b>：攻击 / 闪避 / 反击 / 战术动作 / 逃跑 / 施法<br>
+        3️⃣ <b>对抗逻辑</b><br>
+        - 反击：战斗技能 vs 战斗技能 → 成功等级高者造成伤害<br>
+        - 闪避：战斗技能 vs 闪避 → 攻击方等级更高才命中<br>
+        - 平手规则明确偏向防守方（除反击平手）<br>
+        4️⃣ <b>极限成功伤害</b><br>
+        - 穿刺武器：最大伤害 + 再掷伤害<br>
+        - 非穿刺武器：最大伤害</p>
+
+        <h5>六、战术动作（缴械 / 压制 / 推倒等）</h5>
+        <p>比较 <b>体格（Build）</b><br>
+        每差 1 点 → 攻击者 1 个惩罚骰<br>
+        差 ≥3 → 战术不可行<br>
+        成功 ≠ 伤害，而是 <b>实现战术目标</b></p>
+
+        <h5>七、火器战斗（Firearms）</h5>
+        <p>1️⃣ <b>核心原则</b>：不对抗，失败永不造成伤害，困难度由<b>射程决定</b><br>
+        2️⃣ <b>射程 → 困难度</b><br>
+        <table>
+        <tr><th>射程</th><th>难度</th></tr>
+        <tr><td>基本</td><td>普通</td></tr>
+        <tr><td>2×</td><td>困难</td></tr>
+        <tr><td>4×</td><td>极限</td></tr>
+        </table>
+        3️⃣ <b>常见修正</b><br>
+        - 瞄准：奖励骰<br>
+        - 近距离：奖励骰<br>
+        - 目标闪避 / 掩护 / 快速移动：惩罚骰<br>
+        - 近战射击：惩罚骰 + 失误可能误伤友军<br>
+        4️⃣ <b>全自动 / 爆裂</b><br>
+        技能 ÷10 = 每轮子弹数（最少3）。每轮单独掷骰，后续轮次逐渐增加惩罚骰。<br>
+        极限成功 → 全中 + 部分贯穿</p>
+
+        <h5>八、追逐规则（Chase）</h5>
+        <p>1️⃣ <b>初始化</b>：决定追逐分组，进行<b>速度检定（CON 或 驾驶）</b><br>
+        - 成功：MOV 不变<br>
+        - 极限：MOV +1<br>
+        - 失败：MOV -1<br>
+        2️⃣ <b>行动</b>：普通移动 / 冲刺 / 攻击 / 协助。冲刺越猛 → 危害骰惩罚越多<br>
+        3️⃣ <b>特殊情况</b><br>
+        - 射击中：移动会吃惩罚骰<br>
+        - 打轮胎：护甲3，仅穿刺可毁<br>
+        - 司机重伤 → 立即危害检定</p>
+
+        <h5>九、理智（SAN）与疯狂</h5>
+        <p>1️⃣ <b>触发条件</b><br>
+        - 单次失 SAN ≥5 → 临时疯狂<br>
+        - 一天失 ≥1/5 SAN → 不定期疯狂<br>
+        2️⃣ <b>疯狂类型</b><br>
+        - 实时：1D10 回合<br>
+        - 摘要：1D10 小时<br>
+        - 可能获得：恐惧症 / 狂躁症 / 妄想<br>
+        3️⃣ <b>恢复</b><br>
+        - 临时疯狂：休息即可<br>
+        - 不定期疯狂：月度治疗检定<br>
+        - 私人治疗 > 机构治疗 成功率高</p>
+
+        <h5>十、神话书与魔法</h5>
+        <p>1️⃣ <b>阅读神话书</b>：越古老 → 难度越高。初读：SAN 损失 + 神话技能。全书学习：时间长，但收益完整。<br>
+        2️⃣ <b>施法</b>：初次施法：困难 POW。可推骰（失败代价极高）。MP 可透支 HP。<br>
+        3️⃣ <b>POW 成长</b>：赢得 POW 对抗 或 Luck 01。擲 1D100 > 当前 POW → POW +1D10（永久）</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.divider()
+
+        st.caption("不知道该做什么？助手可以提供一些思路。")
+        if st.button("🤔 获取行动建议"):
+            with st.spinner("助手正在分析局势..."):
+                help_text = ai_get_help(st.session_state.dm_text, inv)
+                st.session_state.helper_msg = help_text
+
+        if "helper_msg" in st.session_state:
+            st.markdown(f"<div class='helper-box'>{st.session_state.helper_msg}</div>", unsafe_allow_html=True)
+    # --------------------------
+
     tab1, tab2, tab3 = st.tabs(["📖 剧情互动", "📝 行动记录", "📓 调查笔记本"])
 
     with tab1:
         st.info(st.session_state.dm_text)
 
-        # 显示投骰结果
         if st.session_state.get("last_dice_result"):
             res_data = st.session_state.last_dice_result
             st.markdown(
@@ -680,9 +940,6 @@ def render_game_interface():
 
         st.divider()
 
-        # ================== 核心交互区：判定等待逻辑 ==================
-
-        # 1. 检查是否存在等待中的判定
         if st.session_state.pending_check:
             check = st.session_state.pending_check
             st.markdown(f"""
@@ -696,40 +953,36 @@ def render_game_interface():
             col_roll, col_skip = st.columns([1, 1])
             with col_roll:
                 if st.button(f"🎲 投掷 {check['skill']}", type="primary", use_container_width=True):
-                    # 动画
                     ph = st.empty()
                     for _ in range(10):
                         ph.markdown(f"<div class='dice-anim'>{random.randint(1, 100)}</div>", unsafe_allow_html=True)
                         time.sleep(0.05)
 
                     final_roll = random.randint(1, 100)
-                    skill_val = inv['skills'].get(check['skill'], inv['stats'].get(check['skill'], 15))  # 兼容属性和技能
+                    skill_val = inv['skills'].get(check['skill'], inv['stats'].get(check['skill'], 15))
                     if check['skill'] == '幸运': skill_val = inv['stats']['幸运']
 
                     level, css = check_coc7_success(final_roll, skill_val)
                     ph.markdown(f"<div class='dice-anim {css}'>{final_roll}</div>", unsafe_allow_html=True)
 
-                    # 记录结果并清除等待状态
                     st.session_state.last_dice_result = {
                         "skill": check['skill'], "val": final_roll, "target": skill_val, "level": level, "css": css
                     }
                     add_log("dice", f"{check['skill']} 检定", f"{final_roll} ({level})")
 
-                    # 第二阶段：生成剧情
                     with st.spinner("守密人正在判定后果..."):
                         check_info = {"skill": check['skill'], "roll": final_roll, "target": skill_val,
                                       "result_level": level}
                         narrative = ai_narrate_outcome(check['action'], check_info)
                         st.session_state.dm_text = process_clues(narrative)
 
-                    st.session_state.pending_check = None  # 清除锁
+                    st.session_state.pending_check = None
                     st.rerun()
 
             with col_skip:
                 st.markdown("<div style='text-align:center; color:#666;'>⚠️ 命运无法逃避，你必须掷骰。</div>",
                             unsafe_allow_html=True)
 
-        # 2. 正常行动输入 (当没有判定等待时显示)
         else:
             st.markdown("#### 🗣️ 采取行动")
             action = st.text_input("你的行动...", placeholder="例如：我向雷蒙德律师询问史密斯先生的死因")
@@ -738,12 +991,10 @@ def render_game_interface():
                 if action:
                     add_log("action", action)
 
-                    # 第一阶段：AI 裁决 (是否需要检定)
                     with st.spinner("守密人正在判断是否需要检定..."):
                         need_roll, skill, diff = ai_judge_check(action, inv['skills'])
 
                         if need_roll:
-                            # 进入判定等待状态，暂停叙事
                             st.session_state.pending_check = {
                                 "action": action,
                                 "skill": skill,
@@ -751,7 +1002,6 @@ def render_game_interface():
                             }
                             st.rerun()
                         else:
-                            # 无需检定，直接生成剧情
                             narrative = ai_narrate_outcome(action)
                             st.session_state.dm_text = process_clues(narrative)
                             st.rerun()
@@ -786,10 +1036,12 @@ def main():
                                                      type="password")
     st.session_state.base_url = st.sidebar.text_input("Base URL", value=st.session_state.base_url)
 
-    st.title("🕯️ CoC 7e: 罗德岛的黄金梦魇 | 规则严谨版")
+    st.title("🕯️ CoC 7e: 罗德岛的黄金梦魇")
 
-    # 逻辑流：没角色 -> 车卡; 有角色但没确认介绍 -> 介绍页; 否则 -> 游戏界面
-    if not st.session_state.investigator:
+    # 逻辑流：没角色 -> 规则导读 -> 车卡; 有角色但没确认介绍 -> 介绍页; 否则 -> 游戏界面
+    if not st.session_state.rules_read:
+        render_rules_guide()
+    elif not st.session_state.investigator:
         render_character_creation()
     elif not st.session_state.intro_acknowledged:
         render_intro_page()
