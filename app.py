@@ -4,6 +4,8 @@ from openai import OpenAI
 from datetime import datetime
 import time
 import re
+import json
+import heapq
 
 # ================= 0. 页面配置 =================
 st.set_page_config(layout="wide", page_title="CoC7模组: 罗德岛的黄金梦魇 | 规则严谨版")
@@ -43,32 +45,88 @@ st.markdown("""
     .dice-result-fail { background-color: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px; text-align: center; font-weight: bold; }
     .dice-result-fumble { background-color: #343a40; color: #fff; padding: 10px; border-radius: 5px; text-align: center; font-weight: bold; }
 
+    /* 优化后的日志样式 */
     .log-entry {
-        border-bottom: 1px solid #ddd; padding: 10px 0; font-size: 0.95em;
+        border-bottom: 1px solid #e0e0e0; padding: 12px; font-size: 0.95em;
+        margin-bottom: 8px; background-color: #ffffff; border-radius: 6px;
+        border-left: 5px solid #ccc; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
-    .log-time { color: #666; font-size: 0.8em; }
+    .log-type-action { border-left-color: #007bff; } /* 蓝色-行动 */
+    .log-type-dice { border-left-color: #dc3545; }   /* 红色-检定 */
+    .log-type-system { border-left-color: #28a745; } /* 绿色-系统 */
+    .log-type-madness { border-left-color: #6f42c1; background-color: #f3e5f5; } /* 紫色-疯狂 */
+    .log-type-correction { border-left-color: #fd7e14; background-color: #fff3cd; } /* 橙色-修正 */
+
+    .log-header { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 0.8em; color: #666; }
+    .log-content { font-weight: bold; color: #333; margin-bottom: 4px; }
+    .log-result { font-size: 0.9em; color: #555; background: #f8f9fa; padding: 2px 6px; border-radius: 4px; display: inline-block; }
+
+    /* 记忆摘要样式 */
+    .memory-summary {
+        background-color: #f0f4f8; border-left: 3px solid #3c8dbc;
+        padding: 6px 10px; margin-top: 8px; font-size: 0.85em; color: #444;
+        font-family: "Courier New", monospace; border-radius: 0 4px 4px 0;
+    }
+    .memory-tags {
+        font-size: 0.75em; color: #888; margin-top: 4px;
+    }
+    .memory-tag {
+        background: #e1e1e1; padding: 2px 6px; border-radius: 10px; margin-right: 4px; display: inline-block;
+    }
+
+    /* 增强的线索样式 */
     .clue-item {
-        background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; margin-bottom: 8px; border-radius: 4px;
+        background-color: #fff; border: 1px solid #ddd; padding: 12px; margin-bottom: 10px; border-radius: 6px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
+    .clue-header { display: flex; justify-content: space-between; margin-bottom: 6px; align-items: center;}
+    .clue-meta { font-size: 0.8em; color: #666; }
+    .clue-content { font-size: 1em; color: #222; line-height: 1.5; }
+
+    .badge { padding: 2px 8px; border-radius: 12px; font-size: 0.75em; font-weight: bold; margin-right: 5px; color: #fff;}
+    .badge-core { background-color: #d39e00; } /* 金色-核心 */
+    .badge-side { background-color: #17a2b8; } /* 蓝色-支线 */
+    .badge-mislead { background-color: #dc3545; } /* 红色-误导 */
+
+    .badge-high { background-color: #28a745; } /* 绿色-高信 */
+    .badge-mid { background-color: #ffc107; color: #333; } /* 黄色-中信 */
+    .badge-low { background-color: #6c757d; } /* 灰色-低信 */
+
     .check-request-box {
         background-color: #fff3cd; border: 2px solid #ffc107; padding: 20px; border-radius: 10px; text-align: center;
         margin: 20px 0;
     }
-    /* 助手建议样式 */
-    .helper-box {
-        background-color: #e3f2fd; border: 1px solid #90caf9; padding: 10px; border-radius: 8px; margin-top: 10px; color: #0d47a1; font-size: 0.9em;
+
+    /* 疯狂状态特效 */
+    .madness-alert {
+        background-color: #4a148c; color: white; padding: 10px; border-radius: 5px; 
+        text-align: center; font-weight: bold; border: 2px solid #880e4f;
+        animation: pulse 2s infinite;
     }
-    /* 规则书样式 */
-    .coc-rules-intro {
-        font-size: 0.95em; color: #333; background-color: #fff; padding: 20px; border-radius: 5px; 
-        border: 1px solid #ddd; line-height: 1.6;
+    @keyframes pulse {
+        0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(136, 14, 79, 0.7); }
+        70% { transform: scale(1.02); box-shadow: 0 0 0 10px rgba(136, 14, 79, 0); }
+        100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(136, 14, 79, 0); }
     }
-    .coc-rules-intro h4 { color: #8b0000; border-bottom: 3px solid #8b0000; padding-bottom: 10px; margin-top: 0; font-size: 1.5em; text-align: center;}
-    .coc-rules-intro h5 { color: #2b2b2b; background-color: #e9ecef; padding: 8px; margin-top: 20px; font-weight: bold; border-left: 5px solid #8b0000;}
-    .coc-rules-intro ul { padding-left: 20px; }
-    .coc-rules-intro table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-    .coc-rules-intro th, .coc-rules-intro td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-    .coc-rules-intro th { background-color: #f2f2f2; font-weight: bold; color: #8b0000; }
+
+    /* 状态栏样式 */
+    .world-state-box {
+        font-size: 0.85em; background: #e0e0e0; padding: 8px; border-radius: 4px; margin-bottom: 10px; border-left: 4px solid #555;
+    }
+    .mental-state-box {
+        font-size: 0.85em; background: #e8eaf6; padding: 8px; border-radius: 4px; margin-bottom: 10px; border-left: 4px solid #3f51b5;
+    }
+
+    /* 剧情存档样式 */
+    .history-box {
+        background-color: #ffffff; border: 1px solid #dcdcdc; border-radius: 5px; padding: 15px; margin-bottom: 10px;
+        max-height: 300px; overflow-y: auto;
+    }
+    .history-entry {
+        margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px dashed #ccc;
+    }
+    .history-header { font-weight: bold; color: #8b0000; font-size: 0.9em; margin-bottom: 4px;}
+    .history-content { font-size: 0.9em; color: #333; white-space: pre-wrap; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -86,6 +144,21 @@ BASE_SKILLS = {
     "驾驶(飞行器)": 1, "心理学": 10, "骑术": 5, "科学(生物学)": 1,
     "科学(化学)": 1, "妙手": 10, "侦查": 25, "潜行": 20,
     "生存": 10, "游泳": 20, "投掷": 25, "追踪": 10
+}
+
+# 疯狂症状库
+MADNESS_TABLE = {
+    "phobias": [
+        "恐水症", "恐高症", "幽闭恐惧症", "黑暗恐惧症", "尸体恐惧症",
+        "鲜血恐惧症", "老鼠恐惧症", "异类恐惧症(害怕奇怪形状)", "噪音恐惧症", "人群恐惧症"
+    ],
+    "manias": [
+        "洗手癖(试图洗掉污秽)", "欺诈癖(无法说真话)", "暴食癖", "强迫性多疑",
+        "收藏癖(收集无用之物)", "纵火癖", "自言自语", "书写狂(记录一切)", "偏执狂(认为被监视)"
+    ],
+    "sources": [
+        "普通恐怖(尸体/惊吓)", "暴力(目睹酷刑/杀戮)", "宇宙真相(时空/维度)", "神话存在(不可名状怪物)"
+    ]
 }
 
 # 2. 职业定义 (扩展版)
@@ -215,41 +288,115 @@ def roll_stat(stat_name):
 
 
 def process_clues(text):
+    """旧的正则提取，保留用于视觉高亮，真正的数据更新移交给 parse_ai_state_update"""
     clue_pattern = r"【线索：(.*?)】"
-    found_clues = re.findall(clue_pattern, text)
-    for clue in found_clues:
-        if clue not in st.session_state.notebook:
-            st.session_state.notebook.append({
-                "time": datetime.now().strftime("%H:%M"),
-                "content": clue
-            })
+    # 纯视觉高亮替换
     return text.replace("【线索：", "**【线索：").replace("】", "】**")
 
 
-def add_log(action_type, content, result=None):
+def save_plot_history(action, content):
+    """将新的剧情保存到历史存档中"""
+    if "plot_history" not in st.session_state:
+        st.session_state.plot_history = []
+
+    st.session_state.plot_history.append({
+        "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "action": action,
+        "content": content
+    })
+
+
+def add_log(action_type, content, result=None, memory_summary=None, memory_tags=None):
     st.session_state.action_log.append({
         "time": datetime.now().strftime("%H:%M:%S"),
         "type": action_type,
         "content": content,
-        "result": result
+        "result": result,
+        "memory_summary": memory_summary,
+        "memory_tags": memory_tags
     })
 
 
 def check_coc7_success(roll_val, skill_val):
-    if roll_val == 1: return "大成功", "dice-result-critical"
-    if skill_val < 50 and roll_val >= 96: return "大失败", "dice-result-fumble"
-    if skill_val >= 50 and roll_val == 100: return "大失败", "dice-result-fumble"
-    if roll_val <= skill_val // 5: return "极难成功", "dice-result-critical"
-    if roll_val <= skill_val // 2: return "困难成功", "dice-result-success"
-    if roll_val <= skill_val: return "常规成功", "dice-result-success"
+    # 1. 大成功：01
+    if roll_val == 1:
+        return "大成功", "dice-result-critical"
+
+    # 2. 大失败：100 (若技能>=50) 或 96-100 (若技能<50)
+    if skill_val < 50 and roll_val >= 96:
+        return "大失败", "dice-result-fumble"
+    if skill_val >= 50 and roll_val == 100:
+        return "大失败", "dice-result-fumble"
+
+    # 3. 成功等级
+    if roll_val <= skill_val // 5:
+        return "极限成功", "dice-result-critical"
+    if roll_val <= skill_val // 2:
+        return "困难成功", "dice-result-success"
+    if roll_val <= skill_val:
+        return "普通成功", "dice-result-success"
+
+    # 4. 失败
     return "失败", "dice-result-fail"
 
 
-# ================= 3. AI 接口 =================
+def roll_madness_symptom():
+    """随机生成疯狂症状"""
+    symptom_type = random.choice(["phobias", "manias"])
+    return random.choice(MADNESS_TABLE[symptom_type])
+
+
+# ================= 3. AI 接口 (Authoritative State + Memory Retrieval) =================
 def get_ai_client():
     if "api_key" not in st.session_state or not st.session_state.api_key:
         return None
     return OpenAI(api_key=st.session_state.api_key, base_url=st.session_state.base_url)
+
+
+def retrieve_relevant_memories(action_context, limit=8):
+    """检索相关记忆：基于当前地点和行动关键词"""
+    if "memory_archive" not in st.session_state or not st.session_state.memory_archive:
+        return "（暂无历史记忆）"
+
+    current_location = st.session_state.game_state['world']['location']
+
+    # 简单的关键词提取（按空格分词）
+    query_tokens = set(action_context.split())
+    query_tokens.add(current_location)
+
+    scored_memories = []
+
+    for idx, mem in enumerate(st.session_state.memory_archive):
+        score = 0
+        # 标签匹配
+        if "tags" in mem:
+            for tag in mem["tags"]:
+                # 如果标签包含当前地点，加分
+                if current_location in tag:
+                    score += 3
+                # 如果标签包含动作中的关键词，加分
+                for token in query_tokens:
+                    if token in tag:
+                        score += 2
+
+        # 倒序加权（越近的记忆越可能相关）
+        recency_bonus = idx / len(st.session_state.memory_archive)
+        score += recency_bonus
+
+        if score > 0.1:  # 只有相关性才加入
+            heapq.heappush(scored_memories, (-score, idx, mem))
+
+    # 取 Top K
+    top_memories = []
+    count = 0
+    while scored_memories and count < limit:
+        score, _, mem = heapq.heappop(scored_memories)
+        summary = mem.get("summary", "无内容")
+        time_str = mem.get("fields", {}).get("when", "未知时间")
+        top_memories.append(f"[{time_str}] {summary}")
+        count += 1
+
+    return "\n".join(top_memories) if top_memories else "（未检索到高度相关的历史事件）"
 
 
 def ai_judge_check(action_context, player_skills):
@@ -289,96 +436,388 @@ def ai_judge_check(action_context, player_skills):
         return False, "", ""
 
 
-def ai_narrate_outcome(action_context, check_info=None):
-    """AI 叙事：根据行动和（可选的）检定结果生成剧情"""
+def ai_get_help(context, inv):
+    """
+    新手助手：分析当前局势，给出建议
+    """
     client = get_ai_client()
-    if not client: return "系统提示：API未连接。"
-
-    outcome_str = "自动成功"
-    if check_info:
-        outcome_str = f"技能【{check_info['skill']}】检定结果：{check_info['result_level']} (掷骰 {check_info['roll']}/目标 {check_info['target']})"
-
-    # 获取角色特性
-    traits = st.session_state.investigator.get('traits', '无') if st.session_state.investigator else '无'
+    if not client: return "⚠️ API 未连接，无法获取建议。"
 
     prompt = f"""
-    【指令】你是《克苏鲁的呼唤》7版模组《罗德岛的黄金梦魇》的守密人(KP)。
+    【指令】你是《克苏鲁的呼唤》(CoC 7e) 的新手辅助助手。
 
-    【玩家信息】
-    玩家角色特性：{traits}
-    (请在生成剧情时，根据该特性调整角色的行为描述、对话风格或心理活动。)
+    【当前剧情摘要】
+    {context[-2000:]}
 
-    【剧本背景】
-    1921年12月，罗德岛。10年前“前进号”捕鲸船带回了被诅咒的金币（偷自克苏鲁祭坛）。
-    船长德怀特变成了深潜者，躲在沙滩小屋。
-    雕塑家麦凯恩是克苏鲁的傀儡，制造雕像想找回金币。
-    玩家的叔叔史密斯（已故）曾是船员，刚死于雕像砸头意外，玩家来继承遗产。
-    关键物品：史密斯遗物中残缺的金币（剩下1/3）、航海日志、老鼠啃食的日记。
-
-    【上下文】{st.session_state.dm_text[-800:]}
-    【玩家行动】{action_context}
-    【判定结果】{outcome_str}
+    【调查员状态】
+    职业：{inv['job']}
+    技能高值：{', '.join([k for k, v in inv['skills'].items() if v > 40])}
+    HP: {inv['derived']['HP']} | SAN: {inv['derived']['SAN']}
 
     【任务】
-    请根据上述判定结果，描写接下来的剧情发展。
-    - 严格遵循模组剧情，不要随意创造与模组无关的内容。
-    - 如果是大成功/极难成功，给予更多奖励或细节（如发现金币上的不可名状符号、日记中的疯言疯语）。
-    - 如果是失败/大失败，描述挫折或负面后果（如被老鼠群攻击、被警察怀疑）。
+    根据当前局势，为迷茫的玩家提供 3 个可行的行动建议。
+    建议应当符合 CoC 的调查风格，或应对眼前的危机。
+    请保持简短（每条建议不超过 30 字）。
 
-    【叙事风格 - 严格执行】
-    1. **高效叙事（7:3比例）**：请将 **70%** 的篇幅用于陈述重点信息（事实、结果、直接反馈、NPC关键对话），仅用 **30%** 的篇幅进行环境氛围描写。
-    2. 拒绝冗长：不要堆砌辞藻，直接告诉玩家发生了什么。
-    3. 风格：冷峻、客观、充满悬疑感，但绝不拖沓。
-
-    - 如果有重要线索（如：航海日志内容、金币、NPC证词），请在段落末尾以【线索：...】格式明确标注。
-    - **严禁**在剧情末尾提供“推荐行动指南”或类似的下一步建议。只描述当前发生的事情和结果。
+    【格式】
+    1. [行动建议1]
+    2. [行动建议2]
+    3. [行动建议3]
     """
-    try:
-        response = client.chat.completions.create(
-            model=st.session_state.model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.8
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"AI 错误: {e}"
 
-
-# --- 跑团助手 ---
-def ai_get_help(current_context, investigator):
-    """跑团助手：分析当前局势，给出建议"""
-    client = get_ai_client()
-    if not client: return "助手提示：请先配置API Key。"
-
-    prompt = f"""
-    【角色】你是一位经验丰富的《克苏鲁的呼唤》(CoC 7e) 跑团老手，正在指导一位新手玩家。
-    【当前模组】《罗德岛的黄金梦魇》
-    【当前剧情】{current_context[-1000:]}
-    【玩家职业】{investigator['job']}
-    【玩家技能】{list(investigator['skills'].keys())}
-
-    【任务】
-    玩家现在有点迷茫，不知道该做什么。请根据当前剧情，给出 3 条具体的行动建议。
-    建议方向：
-    1. 可以调查的地点或物品。
-    2. 可以询问NPC的问题。
-    3. 可以使用的技能（如侦查、聆听、心理学等）。
-
-    【限制】
-    - 不要剧透后续剧情！
-    - 只提供思路，让玩家自己去执行。
-    - 语气亲切、鼓励。
-    - 使用 Markdown 列表格式输出。
-    """
     try:
         response = client.chat.completions.create(
             model=st.session_state.model_name,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7
         )
-        return response.choices[0].message.content
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        return f"助手掉线了: {e}"
+        return f"助手掉线了... ({e})"
+
+
+def apply_state_updates(updates):
+    """将 AI 返回的结构化更新应用到 session_state，包含 SAN/疯狂/线索/NPC 系统"""
+    if not updates: return
+
+    memory_data = None  # 用于回传给UI显示
+
+    # 1. 更新调查员状态
+    if "investigator" in updates:
+        inv_update = updates["investigator"]
+        inv = st.session_state.investigator
+        gs = st.session_state.game_state
+
+        # HP 更新
+        if "hp_change" in inv_update and inv_update["hp_change"] != 0:
+            inv['derived']['HP'] += inv_update["hp_change"]
+            inv['derived']['HP'] = max(0, min(inv['derived']['HP'], inv['derived']['MAX_HP']))
+            add_log("system", f"HP 变化: {inv_update['hp_change']}", f"当前 {inv['derived']['HP']}")
+
+        # SAN 更新与疯狂检定
+        if "san_change" in inv_update and inv_update["san_change"] < 0:
+            loss = abs(inv_update["san_change"])
+            inv['derived']['SAN'] += inv_update["san_change"]
+            current_san = inv['derived']['SAN']
+
+            # 更新当日累计损失
+            gs['sanity_data']['daily_loss'] += loss
+
+            add_log("system", f"理智损失: -{loss}", f"当前 SAN: {current_san}")
+
+            # 永久疯狂检查
+            if current_san <= 0:
+                gs['sanity_data']['status'] = "permanent"
+                inv['derived']['SAN'] = 0
+                add_log("madness", "⚠️ 永久疯狂！", "调查员心智彻底崩溃，游戏结束。")
+
+            # 临时疯狂检查：单次损失 >= 5
+            elif loss >= 5 and gs['sanity_data']['status'] == "sane":
+                int_val = inv['stats']['INT']
+                roll = random.randint(1, 100)
+                if roll <= int_val:
+                    symptom = roll_madness_symptom()
+                    gs['sanity_data']['status'] = "temporary"
+                    gs['sanity_data']['symptom'] = symptom
+                    add_log("madness", f"智力检定成功({roll}≤{int_val}) -> 💡理解了恐怖", f"陷入【临时疯狂】")
+                    add_log("madness", f"获得症状: {symptom}", "持续 1d10 小时")
+                else:
+                    add_log("system", f"智力检定失败({roll}>{int_val}) -> 🧠 大脑自我保护", "未陷入疯狂")
+
+            # 不定性疯狂检查：单日累计 >= 起始值/5
+            elif gs['sanity_data']['daily_loss'] >= (gs['sanity_data']['start_of_day'] // 5) and gs['sanity_data'][
+                'status'] in ["sane", "temporary"]:
+                symptom = roll_madness_symptom()
+                gs['sanity_data']['status'] = "indefinite"
+                gs['sanity_data']['symptom'] = symptom
+                add_log("madness", "⚠️ 单日丧失过多理智", "陷入【不定性疯狂】")
+                add_log("madness", f"获得症状: {symptom}", "直到病情好转")
+
+        # MP 更新
+        if "mp_change" in inv_update and inv_update["mp_change"] != 0:
+            inv['derived']['MP'] += inv_update["mp_change"]
+            inv['derived']['MP'] = max(0, min(inv['derived']['MP'], inv['derived']['MAX_MP']))
+
+    # 2. 更新权威游戏状态 (game_state)
+    if "game_state" in updates:
+        gs_update = updates["game_state"]
+        current_gs = st.session_state.game_state
+
+        # 更新世界信息
+        if "world" in gs_update:
+            for k, v in gs_update["world"].items():
+                current_gs["world"][k] = v
+
+        # 更新 NPC 状态 (支持嵌套更新)
+        if "npcs" in gs_update:
+            for npc_name, npc_data in gs_update["npcs"].items():
+                if npc_name not in current_gs["npcs"]:
+                    current_gs["npcs"][npc_name] = {}
+                for k, v in npc_data.items():
+                    current_gs["npcs"][npc_name][k] = v
+
+        # 更新案件线索 (线索系统升级)
+        if "new_clues" in gs_update:
+            for clue in gs_update["new_clues"]:
+                # 检查重复 (基于内容前10个字简单去重)
+                is_duplicate = any(c['content'][:10] == clue['content'][:10] for c in st.session_state.notebook)
+
+                if not is_duplicate:
+                    # 补全默认字段，防止 AI 漏填
+                    new_clue_entry = {
+                        "time": current_gs["world"]["time"],
+                        "content": clue.get('content', '未知内容'),
+                        "type": clue.get('type', '支线'),
+                        "source": clue.get('source', '未知来源'),
+                        "reliability": clue.get('reliability', '中')
+                    }
+                    st.session_state.notebook.append(new_clue_entry)
+                    add_log("system", f"发现新线索 [{new_clue_entry['type']}]", "已记录到笔记本")
+
+        # 更新规则状态
+        if "rules" in gs_update:
+            for k, v in gs_update["rules"].items():
+                current_gs["rules"][k] = v
+
+    # 3. 存储记忆档案 (Memory Archive)
+    if "memory" in updates and updates["memory"]:
+        mem = updates["memory"]
+        # 确保基本字段存在
+        if "summary" in mem and mem["summary"]:
+            new_entry = {
+                "id": len(st.session_state.memory_archive) + 1,
+                "summary": mem["summary"],
+                "tags": mem.get("tags", []),
+                "fields": mem.get("fields", {})
+            }
+            st.session_state.memory_archive.append(new_entry)
+            memory_data = new_entry  # 返回给调用层以便UI展示
+
+    return memory_data
+
+
+def ai_narrate_outcome(action_context, check_info=None):
+    """AI 叙事：根据行动和（可选的）检定结果生成剧情，并维护权威状态表 + 记忆档案 + 审查器"""
+    client = get_ai_client()
+    if not client: return "系统提示：API未连接。", None
+
+    outcome_str = "自动成功"
+    fumble_instruction = ""
+
+    if check_info:
+        outcome_str = f"技能【{check_info['skill']}】检定结果：{check_info['result_level']} (掷骰 {check_info['roll']}/目标 {check_info['target']})"
+        if check_info['result_level'] == "大失败":
+            fumble_instruction = "【特别指令】玩家遭遇了【大失败】。请务必在剧情中描述严重的负面后果（如：受伤、损坏物品、被敌人发现、陷入绝境等），这不仅仅是失败，而是灾难性的失误。"
+
+    # 1. 序列化当前权威状态
+    current_state_json = json.dumps({
+        "investigator_derived": st.session_state.investigator['derived'],
+        "world": st.session_state.game_state['world'],
+        "rules": st.session_state.game_state['rules'],
+        "sanity_data": st.session_state.game_state['sanity_data'],
+        "npcs": st.session_state.game_state['npcs'],  # 注入 NPC 状态
+        "known_clues_count": len(st.session_state.notebook)
+    }, ensure_ascii=False)
+
+    # 2. 检索相关记忆 (RAG)
+    relevant_memories = retrieve_relevant_memories(action_context)
+
+    # 2.1 构建完整的剧情历史上下文 (Context Window)
+    # 将 plot_history 转换为 AI 可读的文本块，确保连贯性
+    history_context = ""
+    if "plot_history" in st.session_state and st.session_state.plot_history:
+        # 为了防止Token溢出，我们可能需要限制长度，但尽量包含所有
+        entries = []
+        for i, entry in enumerate(st.session_state.plot_history):
+            entries.append(
+                f"【第{i + 1}幕 ({entry['timestamp']})】\n玩家行动：{entry['action']}\n剧情进展：{entry['content']}")
+
+        full_hist = "\n\n".join(entries)
+        # 简单的截断保护 (保留最后 12000 字符，约为 3000-4000 token，留给 generation)
+        history_context = full_hist[-12000:] if len(full_hist) > 12000 else full_hist
+    else:
+        history_context = "（游戏刚开始，暂无剧情历史）"
+
+    traits = st.session_state.investigator.get('traits', '无') if st.session_state.investigator else '无'
+
+    # 疯狂状态注入
+    madness_status = st.session_state.game_state['sanity_data']
+    madness_prompt = ""
+    if madness_status['status'] != "sane":
+        madness_prompt = f"【警告：调查员处于疯狂状态！】类型：{madness_status['status']}。当前症状：{madness_status['symptom']}。请在剧情中体现出调查员的感知被扭曲、强迫行为或极度恐惧。如果玩家的行动与症状冲突（例如恐高症却想爬楼），请描述其生理上的抗拒甚至行动失败。"
+
+    # DM 风格注入
+    dm_style_prompt = ""
+    if "dm_style" in st.session_state:
+        style = st.session_state.dm_style
+        dm_style_prompt = f"""
+        【DM 叙事风格调教（必须执行）】
+        1. 恐怖倾向[{style['horror']}]：请根据此倾向描写环境和心理。
+        2. 致命度[{style['lethality']}]：判定失败后果的严重程度以此为准。
+        3. 信息密度[{style['density']}]：决定单次回复包含的信息量。
+        4. 模组偏向[{style['focus']}]：剧情发展重点。
+        """
+
+    base_prompt = f"""
+    【指令】你是《克苏鲁的呼唤》7版模组《罗德岛的黄金梦魇》的守密人(KP)。
+    {dm_style_prompt}
+
+    【权威状态表 (Authoritative State)】
+    当前数值状态：{current_state_json}
+
+    【相关前情回顾 (Retrieval Augmented Generation - 摘要版)】
+    {relevant_memories}
+
+    【完整剧情回溯 (Full History Context - 避免前后矛盾)】
+    {history_context}
+
+    【玩家信息】
+    玩家角色特性：{traits}
+    {madness_prompt}
+
+    【剧本背景】
+    1921年12月，罗德岛。10年前“前进号”捕鲸船带回了被诅咒的金币。
+    船长德怀特变成了深潜者。雕塑家麦凯恩是傀儡。
+    玩家继承了刚死于意外的叔叔史密斯的遗产。
+
+    【玩家本次行动】{action_context}
+    【本次判定结果】{outcome_str}
+    {fumble_instruction}
+
+    【思维流程与一致性守则（重要）】
+    1. **承接上下文**：剧情必须严格承接在【完整剧情回溯】的最后一段之后。
+    2. **一致性检查（反穿帮）**：
+       - **禁止瞬移**：时间/地点必须符合权威状态。
+       - **禁止全知NPC**：NPC 绝不能透露不在 `knowledge` 列表中的信息。
+       - **禁止虚空造物**：物品/伤势/金钱不能凭空变化。
+       - **禁止诈尸**：已死亡角色不能说话。
+       - **绝对遵守检定结果**：如果失败，绝不能让玩家达成目标；如果大失败，必须发生灾难。
+
+    【NPC 行为控制】
+    请查阅 `npcs` 状态。
+    1. **知情范围**：NPC 绝不能透露不在 `knowledge` 列表中的信息。
+    2. **态度演变**：如果玩家冒犯 NPC，请在 JSON 中将 `attitude` 更新为 '警惕' 或 '敌对'。
+    3. **谎言判定**：如果 `is_lying` 为 true，NPC 表面说一套，但若玩家【心理学】成功，请在剧情中暗示其神情异常。
+    4. **性格驱动**：根据 `weakness` (恐惧/欲望) 决定 NPC 的行动动机。
+
+    【线索生成规则（严肃调查）】
+    1. **分级**：
+       - [核心]：推进剧情必须的。如果检定失败，必须以“带代价的方式”获得，或获得“模糊版”。
+       - [支线]：补充背景，非必须。
+       - [误导]：检定失败/大失败时生成。看似有用但错误的信息。
+    2. **可信度与状态**：
+       - 检定成功：可信度[高]。
+       - 检定失败/勉强成功：可信度[中/低]。
+       - 大失败：生成[误导]线索，且标记为可信度[高]（玩家会误以为是真的）。
+
+    【任务】
+    1. 生成剧情发展。遵循高效叙事（70%信息，30%氛围）。
+    2. 如果涉及恐怖场景，请根据来源（普通/暴力/真相/神话）判定 SAN 损失，填入 JSON。
+    3. **自我审查**：在输出 JSON 前，检查是否违反了“一致性守则”。如果有严重逻辑冲突，将 `consistency_check.passed` 设为 false。
+    4. **关键步骤**：在回复末尾，用 JSON 代码块输出状态变更 AND 本回合记忆摘要。
+
+    【输出格式要求 (JSON Schema)】
+    [剧情文本...]
+
+    ```json
+    {{
+        "consistency_check": {{
+            "passed": true, // 如果发现严重穿帮（瞬移、死人说话等）填 false
+            "reason": "如果 false，请说明原因"
+        }},
+        "investigator": {{
+            "hp_change": 0,
+            "san_change": 0, // 负数表示损失
+            "san_loss_source": "无/普通恐怖/暴力/宇宙真相/神话存在", 
+            "mp_change": 0
+        }},
+        "game_state": {{
+            "world": {{
+                "time": "更新后的时间(如流逝)",
+                "location": "更新后的地点(如未变则不填)"
+            }},
+            "npcs": {{
+                "NPC名称": {{ "attitude": "新态度", "is_lying": false }} 
+            }},
+            "new_clues": [
+                {{
+                    "content": "线索具体内容",
+                    "type": "核心/支线/误导",
+                    "source": "来源",
+                    "reliability": "高/中/低"
+                }}
+            ],
+            "rules": {{
+                "temp_madness": false
+            }}
+        }},
+        "memory": {{
+            "summary": "50~120字的回合摘要。包含地点时间、行动、检定结果、线索、状态变化、下一步意图。",
+            "tags": ["NPC:某人", "地点:某地", "线索:某物", "检定:技能-结果"],
+            "fields": {{
+                "what_happened": "事件简述",
+                "who": "涉及NPC",
+                "where": "地点",
+                "when": "时间",
+                "checks": "{outcome_str}",
+                "consequences": "结果影响"
+            }}
+        }}
+    }}
+    ```
+    """
+
+    # 引入重试机制
+    max_retries = 1
+    current_prompt = base_prompt
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=st.session_state.model_name,
+                messages=[{"role": "user", "content": current_prompt}],
+                temperature=0.8
+            )
+            full_content = response.choices[0].message.content
+
+            # 分离剧情文本和 JSON
+            narrative = full_content
+            json_match = re.search(r"```json(.*?)```", full_content, re.DOTALL)
+
+            if json_match:
+                json_str = json_match.group(1)
+                narrative = full_content.replace(json_match.group(0), "").strip()
+                try:
+                    updates = json.loads(json_str)
+
+                    # 检查一致性
+                    consistency = updates.get("consistency_check", {"passed": True})
+                    if not consistency.get("passed", True):
+                        if attempt < max_retries:
+                            # 触发重写
+                            error_reason = consistency.get("reason", "未知一致性错误")
+                            add_log("correction", f"🛑 触发剧情修正", f"检测到：{error_reason}")
+                            current_prompt = base_prompt + f"\n\n【系统警告】上一次生成被检测为不一致：{error_reason}。请重新生成，务必修正此逻辑错误！"
+                            continue
+                        else:
+                            # 超过重试次数，强制通过但记录
+                            add_log("system", "⚠️ 一致性检查失败但已达重试上限", consistency.get("reason"))
+
+                    # 应用状态更新
+                    memory_result = apply_state_updates(updates)
+                    return narrative, memory_result
+
+                except json.JSONDecodeError:
+                    add_log("system", "状态解析失败", "AI返回了无效的JSON")
+                    return narrative, None
+
+            # 如果没有 JSON，直接返回文本（极为罕见）
+            return narrative, None
+
+        except Exception as e:
+            return f"AI 错误: {e}", None
+
+    return "系统错误：重试循环溢出。", None
 
 
 # ================= 4. 初始化状态 =================
@@ -391,17 +830,85 @@ if "api_key" not in st.session_state: st.session_state.api_key = ""
 if "base_url" not in st.session_state: st.session_state.base_url = "https://api.deepseek.com"
 if "model_name" not in st.session_state: st.session_state.model_name = "deepseek-chat"
 if "intro_acknowledged" not in st.session_state: st.session_state.intro_acknowledged = False
-if "rules_read" not in st.session_state: st.session_state.rules_read = False  # 新增：规则阅读状态
+if "rules_read" not in st.session_state: st.session_state.rules_read = False
 
 if "notebook" not in st.session_state: st.session_state.notebook = []
 if "action_log" not in st.session_state: st.session_state.action_log = []
 if "last_dice_result" not in st.session_state: st.session_state.last_dice_result = None
 if "pending_check" not in st.session_state: st.session_state.pending_check = None
 
+# 新增：剧情存档初始化
+if "plot_history" not in st.session_state: st.session_state.plot_history = []
+
+# 新增：DM 风格默认值
+if "dm_style" not in st.session_state:
+    st.session_state.dm_style = {
+        "horror": "心理",
+        "lethality": "写实",
+        "density": "适中",
+        "focus": "调查"
+    }
+
+# 新增：权威状态表初始化
+if "game_state" not in st.session_state:
+    # 定义初始 NPC 数据
+    INITIAL_NPCS = {
+        "雷蒙德律师": {
+            "desc": "史密斯的遗产律师，戴着金丝眼镜，精明算计。",
+            "knowledge": ["遗嘱内容", "史密斯的财务状况(取了巨款)", "公寓钥匙"],
+            "attitude": "友好",
+            "secret": "私吞了一部分现金遗产",
+            "is_lying": True,
+            "weakness": "贪财"
+        },
+        "麦凯恩": {
+            "desc": "住在隔壁的疯癫艺术家，雕塑家。",
+            "knowledge": ["金币的魔力", "深潜者的存在", "史密斯的死因真相"],
+            "attitude": "警惕",
+            "secret": "他是克苏鲁的傀儡，想要金币",
+            "is_lying": False,
+            "weakness": "对旧日支配者的恐惧"
+        },
+        "德怀特船长": {
+            "desc": "已变成深潜者的前船长，潜伏在暗处。",
+            "knowledge": ["金币的来源", "深潜者契约"],
+            "attitude": "敌对",
+            "secret": "非人生物",
+            "is_lying": False,
+            "weakness": "对黄金的渴望"
+        }
+    }
+
+    st.session_state.game_state = {
+        "world": {
+            "time": "1921-12-20 10:00",
+            "location": "雷蒙德律师事务所",
+            "weather": "冷雨"
+        },
+        "npcs": INITIAL_NPCS,
+        "case": {
+            "unsolved": ["史密斯的真正死因", "金币的下落"]
+        },
+        "rules": {
+            "temp_madness": False,
+            "bonus_dice": 0
+        },
+        "sanity_data": {
+            "start_of_day": 50,  # 修复点：将 san 改为默认值 50
+            "daily_loss": 0,
+            "status": "sane",
+            "symptom": "无"
+        }
+    }
+
+# 新增：记忆档案初始化
+if "memory_archive" not in st.session_state:
+    st.session_state.memory_archive = []
+
 
 # ================= 5. 界面渲染 =================
 
-# --- 新增功能：规则导读页 ---
+# --- 规则导读页 ---
 def render_rules_guide():
     st.markdown("## 📜 CoC 7e 规则速览")
     st.markdown("在开始创建角色之前，请先了解一下《克苏鲁的呼唤》的核心规则。")
@@ -424,7 +931,7 @@ def render_rules_guide():
     <tr><td>失败</td><td>> 技能</td></tr>
     <tr><td>大失败</td><td>100；或技能<50且掷96–100</td></tr>
     </table>
-    ⚠️ 推骰失败 = 必须承受严重后果</p>
+    <strong style='color:red;'>⚠️ 推骰失败 = 必须承受严重后果！必须承受严重后果！必须承受严重后果！必须承受严重后果！</strong></p>
 
     <h5>二、对抗检定（Opposed Roll）</h5>
     <p>双方各自掷同意的技能/属性，比较成功等级高低。<br>
@@ -724,40 +1231,67 @@ def finalize_character():
         "inventory": ["调查员手册", "铅笔", "钱包", "打火机"]
     }
 
-    intro_prompt = f"""
-    【指令】你是《克苏鲁的呼唤》7版模组《罗德岛的黄金梦魇》(The Golden Dream of Rhode Island) 的守密人(KP)。
-    【当前场景】
-    1. 时间：1921年12月20日。
-    2. 地点：美国罗德岛州，普罗维登斯市中心，雷蒙德律师事务所 (Raymond Law Firm)。
-    3. 环境：一间装修考究但略显压抑的办公室，窗外飘着冷雨。
-    4. NPC：雷蒙德律师 (Lawyer Raymond)，政府指派的遗产管理人。态度热情但公事公办。
-    5. 剧情背景：玩家的亲戚（叔叔）史密斯先生 (Mr. Smith) 于1个月前（11月20日）在家中遭遇意外（雕像砸头）身亡。
+    # 初始化权威状态表 (如果尚未初始化)
+    if "game_state" not in st.session_state or not st.session_state.game_state:
+        # 定义初始 NPC 数据
+        INITIAL_NPCS = {
+            "雷蒙德律师": {
+                "desc": "史密斯的遗产律师，戴着金丝眼镜，精明算计。",
+                "knowledge": ["遗嘱内容", "史密斯的财务状况(取了巨款)", "公寓钥匙"],
+                "attitude": "友好",
+                "secret": "私吞了一部分现金遗产",
+                "is_lying": True,
+                "weakness": "贪财"
+            },
+            "麦凯恩": {
+                "desc": "住在隔壁的疯癫艺术家，雕塑家。",
+                "knowledge": ["金币的魔力", "深潜者的存在", "史密斯的死因真相"],
+                "attitude": "警惕",
+                "secret": "他是克苏鲁的傀儡，想要金币",
+                "is_lying": False,
+                "weakness": "对旧日支配者的恐惧"
+            },
+            "德怀特船长": {
+                "desc": "已变成深潜者的前船长，潜伏在暗处。",
+                "knowledge": ["金币的来源", "深潜者契约"],
+                "attitude": "敌对",
+                "secret": "非人生物",
+                "is_lying": False,
+                "weakness": "对黄金的渴望"
+            }
+        }
 
-    【玩家角色】
-    姓名：{st.session_state.temp_name}
-    职业：{st.session_state.temp_job}
-    【角色特性】：{st.session_state.get("temp_traits", "无")}
-    (请在生成剧情时，根据该特性调整角色的行为描述、对话风格或心理活动。)
+        st.session_state.game_state = {
+            "world": {
+                "time": "1921-12-20 10:00",
+                "location": "雷蒙德律师事务所",
+                "weather": "冷雨"
+            },
+            "npcs": INITIAL_NPCS,
+            "case": {
+                "unsolved": ["史密斯的真正死因", "金币的下落"]
+            },
+            "rules": {
+                "temp_madness": False,
+                "bonus_dice": 0
+            },
+            "sanity_data": {
+                "start_of_day": san,
+                "daily_loss": 0,
+                "status": "sane",
+                "symptom": "无"
+            }
+        }
 
-    【任务】
-    请生成一段开场剧情。
-    1. 描述调查员来到律所，见到了雷蒙德律师。
-    2. 雷蒙德告知调查员，由于没有直系亲属，你是史密斯先生的唯一合法继承人。
-    3. 遗产包括：罗德岛市中心的公寓、所有艺术品、以及银行账户里的1000美元。
-    4. 结尾雷蒙德将带调查员前往史密斯的公寓整理遗物。
-
-    【叙事风格 - 严格执行】
-    1. **高效叙事（7:3比例）**：请将 **70%** 的篇幅用于陈述重点信息（事实、结果、直接反馈、NPC关键对话），仅用 **30%** 的篇幅进行环境氛围描写。
-    2. 拒绝冗长：不要堆砌辞藻，直接告诉玩家发生了什么。
-    3. 风格：冷峻、客观、充满悬疑感，但绝不拖沓。
-
-    请注意：如果剧情中出现了重要的可调查信息，请在段落末尾添加【线索：...】标记。
-    **严禁**在此次回复中生成“推荐行动指南”或类似的建议。只描述当前发生的事情和结果。
-    """
+    # 初始化记忆档案
+    if "memory_archive" not in st.session_state:
+        st.session_state.memory_archive = []
 
     with st.spinner("守密人正在翻阅《罗德岛的黄金梦魇》剧本..."):
-        raw_text = ai_narrate_outcome("游戏开始", None)
+        raw_text, mem_res = ai_narrate_outcome("游戏开始", None)
         st.session_state.dm_text = process_clues(raw_text)
+        # 保存到历史存档
+        save_plot_history("游戏开始", raw_text)
         add_log("system", "模组开始：罗德岛的黄金梦魇", "导入完成")
 
 
@@ -774,6 +1308,19 @@ def render_intro_page():
         <p>为了处理后事并继承遗产，你踏上了前往罗德岛的旅程，却不知道一场源自十年前深海的梦魇正等待着你……</p>
         </div>
         """, unsafe_allow_html=True)
+
+        # 新增：DM 风格参数设置
+        with st.expander("⚙️ 守密人(DM) 风格设置", expanded=True):
+            c1, c2 = st.columns(2)
+            st.session_state.dm_style["horror"] = c1.selectbox("恐怖倾向", ["心理 (压抑/暗示)", "猎奇 (血腥/肉体)",
+                                                                            "宇宙 (宏大/虚无)"])
+            st.session_state.dm_style["lethality"] = c2.selectbox("致命度",
+                                                                  ["写实 (标准)", "宽容 (剧情为主)", "残酷 (容易死亡)"])
+            st.session_state.dm_style["density"] = c1.selectbox("信息密度",
+                                                                ["适中", "克制 (需多追问)", "密集 (大量细节)"])
+            st.session_state.dm_style["focus"] = c2.selectbox("模组偏向",
+                                                              ["调查 (解谜)", "生存 (战斗/逃生)", "阴谋 (NPC博弈)"])
+
         if st.button("🚀 我已准备好，开始调查！", type="primary", use_container_width=True):
             st.session_state.intro_acknowledged = True
             st.rerun()
@@ -786,7 +1333,7 @@ def render_intro_page():
         </div>
         <div class='rule-box'>
         <b>2. 成功等级</b><br>
-        常规(≤技能) / 困难(≤1/2) / 极难(≤1/5) / 大成功(1) / 大失败(96-100)
+        普通(≤技能) / 困难(≤1/2) / 极限(≤1/5) / 大成功(1) / 大失败(96-100)
         </div>
         <div class='rule-box'>
         <b>3. 理智值 (SAN)</b><br>
@@ -805,6 +1352,38 @@ def render_game_interface():
     c1.metric("HP", f"{inv['derived']['HP']}/{inv['derived']['MAX_HP']}")
     c2.metric("SAN", f"{inv['derived']['SAN']}/{inv['derived']['MAX_SAN']}")
     c3.metric("MP", f"{inv['derived']['MP']}/{inv['derived']['MAX_MP']}")
+
+    # 显示世界状态 (Authoritative State)
+    if "game_state" in st.session_state:
+        gs = st.session_state.game_state
+        st.sidebar.markdown(f"""
+        <div class='world-state-box'>
+        📅 <b>{gs['world']['time']}</b><br>
+        📍 {gs['world']['location']}<br>
+        ☁️ {gs['world'].get('weather', '')}
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 显示精神状态 (Sanity State)
+        san_status = gs['sanity_data']['status']
+        san_status_label = {
+            "sane": "🟢 神志清醒",
+            "temporary": "🟡 临时疯狂",
+            "indefinite": "🔴 不定性疯狂",
+            "permanent": "💀 永久疯狂"
+        }.get(san_status, "未知")
+
+        st.sidebar.markdown(f"""
+        <div class='mental-state-box'>
+        <b>🧠 {san_status_label}</b><br>
+        当前症状: {gs['sanity_data']['symptom']}<br>
+        当日丧失: {gs['sanity_data']['daily_loss']} SAN
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 如果疯狂，弹出警示
+        if san_status != "sane":
+            st.sidebar.markdown(f"<div class='madness-alert'>⚠️ 你正处于疯狂状态！</div>", unsafe_allow_html=True)
 
     with st.sidebar.expander("技能列表"):
         sorted_skills = sorted(inv["skills"].items(), key=lambda x: x[1], reverse=True)
@@ -832,7 +1411,7 @@ def render_game_interface():
         <tr><td>失败</td><td>> 技能</td></tr>
         <tr><td>大失败</td><td>100；或技能<50且掷96–100</td></tr>
         </table>
-        ⚠️ 推骰失败 = 必须承受严重后果</p>
+        <strong style='color:red;'>⚠️ 推骰失败 = 必须承受严重后果！必须承受严重后果！必须承受严重后果！必须承受严重后果！</strong></p>
 
         <h5>二、对抗检定（Opposed Roll）</h5>
         <p>双方各自掷同意的技能/属性，比较成功等级高低。<br>
@@ -927,6 +1506,43 @@ def render_game_interface():
             st.markdown(f"<div class='helper-box'>{st.session_state.helper_msg}</div>", unsafe_allow_html=True)
     # --------------------------
 
+    # 新增：剧情进度与存档区
+    if "plot_history" in st.session_state and st.session_state.plot_history:
+        with st.expander("📚 剧情回溯与存档 (Story Archive)", expanded=False):
+            turn_count = len(st.session_state.plot_history)
+            st.progress(min(turn_count, 100) / 100, text=f"当前进度：第 {turn_count} 幕")
+
+            # 使用滑块或列表来查看旧剧情
+            if turn_count > 0:
+                # 修复逻辑：只有当大于1幕时才显示滑块，否则直接设为1
+                if turn_count > 1:
+                    selected_turn = st.slider("回溯过往剧情 (拖动查看)", 1, turn_count, turn_count)
+                else:
+                    selected_turn = 1
+
+                # 显示选中的剧情
+                entry = st.session_state.plot_history[selected_turn - 1]
+                st.markdown(f"""
+                <div class='history-box'>
+                    <div class='history-header'>
+                        🎬 第 {selected_turn} 幕 | {entry['timestamp']} | 行动: {entry['action']}
+                    </div>
+                    <div class='history-content'>{process_clues(entry['content'])}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # 显示所有历史记录的开关
+                if st.checkbox("显示所有历史记录列表"):
+                    for idx, h_entry in enumerate(reversed(st.session_state.plot_history)):
+                        st.markdown(f"""
+                        <div class='history-entry'>
+                            <div class='history-header'>第 {turn_count - idx} 幕 - {h_entry['action']}</div>
+                            <div class='history-content'>{process_clues(h_entry['content'])}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.info("暂无历史剧情。")
+
     tab1, tab2, tab3 = st.tabs(["📖 剧情互动", "📝 行动记录", "📓 调查笔记本"])
 
     with tab1:
@@ -973,8 +1589,15 @@ def render_game_interface():
                     with st.spinner("守密人正在判定后果..."):
                         check_info = {"skill": check['skill'], "roll": final_roll, "target": skill_val,
                                       "result_level": level}
-                        narrative = ai_narrate_outcome(check['action'], check_info)
+                        narrative, mem_res = ai_narrate_outcome(check['action'], check_info)
                         st.session_state.dm_text = process_clues(narrative)
+
+                        # 保存到历史存档
+                        save_plot_history(check['action'], narrative)
+
+                        # 单独记录一个系统日志来存储记忆（如果是检定后触发的剧情）
+                        if mem_res:
+                            add_log("system", "剧情推进", None, mem_res['summary'], mem_res['tags'])
 
                     st.session_state.pending_check = None
                     st.rerun()
@@ -989,12 +1612,12 @@ def render_game_interface():
 
             if st.button("执行行动", type="primary"):
                 if action:
-                    add_log("action", action)
 
                     with st.spinner("守密人正在判断是否需要检定..."):
                         need_roll, skill, diff = ai_judge_check(action, inv['skills'])
 
                         if need_roll:
+                            add_log("action", action)
                             st.session_state.pending_check = {
                                 "action": action,
                                 "skill": skill,
@@ -1002,30 +1625,131 @@ def render_game_interface():
                             }
                             st.rerun()
                         else:
-                            narrative = ai_narrate_outcome(action)
+                            narrative, mem_res = ai_narrate_outcome(action)
                             st.session_state.dm_text = process_clues(narrative)
+
+                            # 保存到历史存档
+                            save_plot_history(action, narrative)
+
+                            # 在记录行动的同时，附加上这一轮产生的记忆
+                            add_log("action", action, None,
+                                    mem_res['summary'] if mem_res else None,
+                                    mem_res['tags'] if mem_res else None)
                             st.rerun()
 
     with tab2:
         st.markdown("### 📝 行动日志")
+
+        # 搜索和筛选栏
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            search_txt = st.text_input("🔍 搜索", placeholder="输入关键词搜索日志...", label_visibility="collapsed")
+        with c2:
+            filter_opt = st.selectbox("类型", ["全部", "行动", "检定", "系统", "疯狂", "修正"],
+                                      label_visibility="collapsed")
+
+        # 筛选逻辑
+        display_logs = []
         if st.session_state.action_log:
             for log in reversed(st.session_state.action_log):
-                icon = "👤" if log['type'] == 'action' else "🎲" if log['type'] == 'dice' else "🤖"
+                # 1. 类型筛选
+                if filter_opt != "全部":
+                    if filter_opt == "行动" and log['type'] != 'action': continue
+                    if filter_opt == "检定" and log['type'] != 'dice': continue
+                    if filter_opt == "系统" and log['type'] != 'system': continue
+                    if filter_opt == "疯狂" and log['type'] != 'madness': continue
+                    if filter_opt == "修正" and log['type'] != 'correction': continue
+
+                # 2. 文本搜索
+                if search_txt:
+                    term = search_txt.lower()
+                    content_match = term in log['content'].lower()
+                    result_match = log['result'] and term in log['result'].lower()
+                    summary_match = log.get('memory_summary') and term in log['memory_summary'].lower()
+                    tags_match = log.get('memory_tags') and any(term in t.lower() for t in log['memory_tags'])
+
+                    if not (content_match or result_match or summary_match or tags_match):
+                        continue
+
+                display_logs.append(log)
+
+        # 渲染
+        if display_logs:
+            for log in display_logs:
+                # 映射 CSS 类
+                css_class = "log-type-system"
+                icon = "🤖"
+                if log['type'] == 'action':
+                    css_class = "log-type-action"
+                    icon = "👤"
+                elif log['type'] == 'dice':
+                    css_class = "log-type-dice"
+                    icon = "🎲"
+                elif log['type'] == 'madness':
+                    css_class = "log-type-madness"
+                    icon = "🧠"
+                elif log['type'] == 'correction':
+                    css_class = "log-type-correction"
+                    icon = "🔧"
+
+                # 构建 HTML
+                memory_html = ""
+                if log.get('memory_summary'):
+                    tags_html = "".join([f"<span class='memory-tag'>{t}</span>" for t in log['memory_tags']])
+                    memory_html = f"""
+                    <div class='memory-summary'>
+                        <div><b>📜 回合摘要：</b>{log['memory_summary']}</div>
+                        <div class='memory-tags'>{tags_html}</div>
+                    </div>
+                    """
+
+                result_html = f"<div class='log-result'>结果: {log['result']}</div>" if log['result'] else ""
+
                 st.markdown(f"""
-                <div class='log-entry'>
-                    <span class='log-time'>[{log['time']}]</span> {icon} <b>{log['content']}</b><br>
-                    {f"结果: {log['result']}" if log['result'] else ""}
+                <div class='log-entry {css_class}'>
+                    <div class='log-header'>
+                        <span>{icon} {log['type'].upper()}</span>
+                        <span>{log['time']}</span>
+                    </div>
+                    <div class='log-content'>{log['content']}</div>
+                    {result_html}
+                    {memory_html}
                 </div>
                 """, unsafe_allow_html=True)
         else:
-            st.caption("暂无记录")
+            st.info("没有找到匹配的记录。")
 
     with tab3:
         st.markdown("### 📓 调查笔记本")
         if st.session_state.notebook:
             for note in st.session_state.notebook:
-                st.markdown(f"<div class='clue-item'><b>[{note['time']}]</b> {note['content']}</div>",
-                            unsafe_allow_html=True)
+
+                # 确定标签样式
+                type_badge = "badge-side"
+                if note.get('type') == '核心':
+                    type_badge = "badge-core"
+                elif note.get('type') == '误导':
+                    type_badge = "badge-mislead"
+
+                rel_badge = "badge-mid"
+                if note.get('reliability') == '高':
+                    rel_badge = "badge-high"
+                elif note.get('reliability') == '低':
+                    rel_badge = "badge-low"
+
+                st.markdown(f"""
+                <div class='clue-item'>
+                    <div class='clue-header'>
+                        <div>
+                            <span class='badge {type_badge}'>{note.get('type', '一般')}</span>
+                            <span class='badge {rel_badge}'>可信度: {note.get('reliability', '中')}</span>
+                        </div>
+                        <span class='clue-meta'>{note['time']}</span>
+                    </div>
+                    <div class='clue-content'>{note['content']}</div>
+                    <div class='clue-meta' style='margin-top:5px;'>来源: {note.get('source', '未知')}</div>
+                </div>
+                """, unsafe_allow_html=True)
         else:
             st.info("目前还没有发现任何线索...")
 
